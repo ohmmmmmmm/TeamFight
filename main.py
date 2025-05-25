@@ -54,17 +54,17 @@ TZ_BANGKOK = pytz.timezone('Asia/Bangkok')
 # --- ข้อมูลหลักของระบบ (Global Variables) ---
 # ควรพิจารณาใช้ config file หรือ database ในระยะยาว
 members = {
-    "Juno": "ขาด ❌",
-    "Candy": "ขาด ❌",
-    "Sindrea": "ขาด ❌",
-    "Yam": "ขาด ❌",
-    "Chababa": "ขาด ❌",
-    "Naila": "ขาด ❌",
-    "HeiHei": "ขาด ❌",
-    "HoneyLex": "ขาด ❌",
-    "Aiikz": "ขาด ❌",
-    "Hanna": "ขาด ❌",
-    "Songkran": "ขาด ❌",
+    "Juno": "ขาด ⛔",
+    "Candy": "ขาด ⛔",
+    "Sindrea": "ขาด ⛔",
+    "Yam": "ขาด ⛔",
+    "Chababa": "ขาด ⛔",
+    "Naila": "ขาด ⛔",
+    "HeiHei": "ขาด ⛔",
+    "HoneyLex": "ขาด ⛔",
+    "Aiikz": "ขาด ⛔",
+    "Hanna": "ขาด ⛔",
+    "Songkran": "ขาด ⛔",
 }
 name_mapping = {
     "onitsuka3819": "Juno",
@@ -455,7 +455,7 @@ async def cmd_set_practice(ctx):
     practice_info["id"] = generate_next_practice_id()
     practice_info.update(collected_data)
     practice_info["is_open_for_signup"] = True
-    for member_name in members: members[member_name] = "ขาด" # รีเซ็ตสถานะสมาชิก
+    for member_name in members: members[member_name] = "ขาด ⛔" # รีเซ็ตสถานะสมาชิก
     archive_current_practice_details() # บันทึกการซ้อมใหม่นี้
     
     await ctx.send(f"✅ **ตั้งค่าการซ้อมใหม่ (ฉบับที่ {practice_info['id']}) เรียบร้อยแล้ว!**\n"

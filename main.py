@@ -179,7 +179,11 @@ def create_current_practice_notification_embed():
     embed.add_field(name="📝 สถานะ", value=status_text, inline=False)
     member_lines = [f"• {name}: `{status}`" for name, status in members.items()]
     embed.add_field(name="👥 สมาชิกทีม", value="\n".join(member_lines) or "ไม่มีข้อมูลสมาชิก", inline=False)
-    embed.set_footer(text=f"อัปเดตล่าสุด: {datetime.now(TZ_BANGKOK).strftime('%d %b %Y, %H:%M:%S')}")
+
+    current_time_str = datetime.now(TZ_BANGKOK).strftime('%d %b %Y, %H:%M:%S')
+    footer_text = f"อัปเดตล่าสุด: {current_time_str} | Created by Juno" # <--- เพิ่มข้อความต่อท้าย
+    embed.set_footer(text=footer_text)
+
     if bot.user and bot.user.display_avatar: embed.set_thumbnail(url=bot.user.display_avatar.url)
     return embed
 
@@ -204,7 +208,11 @@ def create_practice_summary_embed_by_id(id_to_summarize: str):
     embed.add_field(name="📍 สถานที่", value=f"`{source['location']}`", inline=False)
     member_lines = [f"• {name}: `{status}`" for name, status in summary_members_state.items()]
     embed.add_field(name="👥 ผลการเข้าร่วม", value="\n".join(member_lines) or "ไม่มีข้อมูลการลงชื่อ", inline=False)
-    embed.set_footer(text=f"สร้างสรุปเมื่อ: {datetime.now(TZ_BANGKOK).strftime('%d %b %Y, %H:%M:%S')}")
+
+
+    summary_time_str = datetime.now(TZ_BANGKOK).strftime('%d %b %Y, %H:%M:%S')
+    footer_text_summary = f"สร้างสรุปเมื่อ: {summary_time_str} | Bot by Juno" # <--- เพิ่มข้อความต่อท้าย
+    embed.set_footer(text=footer_text_summary)
     return embed
 
 # --- Tasks ---

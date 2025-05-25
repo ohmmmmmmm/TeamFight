@@ -48,6 +48,8 @@ members = {
     "candy": "ขาด",
     "sindrea": "ขาด",
     "yam": "ขาด",
+    "chababa": "ขาด",
+    "naila": "ขาด",
 }
 
 # ผูกชื่อ Discord กับชื่อในรายการ
@@ -56,6 +58,8 @@ name_mapping = {
     "candy_dayy": "candy",
     "sindrea_cz": "sindrea",
     "yam2196": "yam",
+    "chababa.": "chababa",
+    "naila_888": "naila",
 }
 
 # ตัวแปรเก็บข้อมูลการซ้อมปัจจุบัน

@@ -1,4 +1,4 @@
-# main.py (รวมโค้ดและปรับปรุงล่าสุด)
+# main.py (รวมโค้ดและปรับปรุงล่าสุด - เน้นการลบข้อความคำสั่ง)
 
 import discord
 from discord.ext import commands, tasks
@@ -7,7 +7,7 @@ from datetime import datetime
 import pytz
 import json
 import os
-from dotenv import load_dotenv # เพิ่มเข้ามา
+from dotenv import load_dotenv
 
 # --- ส่วนของ Flask Server ---
 from flask import Flask
@@ -20,440 +20,484 @@ def home():
     return "Server is running!"
 
 def run_flask():
-    # อ่านค่า PORT จาก environment variable, ถ้าไม่มีให้ใช้ 8080 เป็น default
-    port = int(os.environ.get('PORT', 8080)) # แก้ไข port ตรงนี้ให้ใช้จาก env
-    app.run(host='0.0.0.0', port=port) # แก้ไข port ตรงนี้ให้ใช้จาก env
+    port = int(os.environ.get('PORT', 8080))
+    # ในการ deploy จริง ควรให้ Werkzeug (Flask's default server) แสดง log น้อยลง
+    # หรือใช้ production-ready WSGI server เช่น gunicorn
+    print(f"Flask server attempting to run on host 0.0.0.0, port {port}")
+    try:
+        app.run(host='0.0.0.0', port=port)
+    except Exception as e_flask_run:
+        print(f"!!! ERROR starting Flask server: {e_flask_run}")
+
 
 def start_server():
     t = Thread(target=run_flask)
-    t.daemon = True # ตั้งค่าให้ thread นี้ปิดตัวลงเมื่อ main program ปิด
+    t.daemon = True
     t.start()
+    print("Flask server thread initiated.")
 
 # --- จบส่วนของ Flask Server ---
 
-# โหลดค่าจากไฟล์ .env เข้าสู่ environment variables
-load_dotenv()
+load_dotenv() # โหลดค่าจาก .env
 
-# ตั้งค่า bot
+# --- การตั้งค่า Bot ---
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
+intents.members = True # จำเป็นถ้าจะใช้ ctx.author.name หรือเกี่ยวกับ members
 bot = commands.Bot(command_prefix='!', intents=intents)
+TZ_BANGKOK = pytz.timezone('Asia/Bangkok')
 
-# กำหนดเขตเวลา +07 (ประเทศไทย)
-tz = pytz.timezone('Asia/Bangkok')
-
-# รายชื่อสมาชิกและสถานะเริ่มต้น
-members = {
-    "Juno": "ขาด",
-    "Candy": "ขาด",
-    "Sindrea": "ขาด",
-    "Yam": "ขาด",
-    "Chababa": "ขาด",
-    "Naila": "ขาด",
-    "HoneyLex": "ขาด",
-    "Hanna": "ขาด",
-    "HeiHei": "ขาด",
-    "Songkran": "ขาด",
-    "Aiikz": "ขาด",
+# --- ข้อมูลหลักของระบบ ---
+members = { # ควรโหลดจาก config หรือ database ในอนาคตถ้ามีการเปลี่ยนแปลงบ่อย
+    "Juno": "ขาด", "candy": "ขาด", "sindrea": "ขาด",
+    "yam": "ขาด", "chababa": "ขาด", "naila": "ขาด",
 }
-
-# ผูกชื่อ Discord กับชื่อในรายการ
-name_mapping = {
-    "onitsuka3819": "Juno",
-    "candy_dayy": "Candy",
-    "sindrea_cz": "Sindrea",
-    "yam2196": "Yam",
-    "chababa.": "Chababa",
-    "naila_888": "Naila",
-    "honeylexfahwabwab": "HoneyLex",
-    "hanna05682": "Hanna",
-    "ms.k3144": "HeiHei",
-    "songkran_gbn": "Songkran",
-    "aiikz": "Aiikz",
-
+name_mapping = { # ควรโหลดจาก config หรือ database เช่นกัน
+    "onitsuka3819": "Juno", "candy_dayy": "candy", "sindrea_cz": "sindrea",
+    "yam2196": "yam", "chababa.": "chababa", "naila_888": "naila",
 }
-
-# ตัวแปรเก็บข้อมูลการซ้อมปัจจุบัน
+# ตัวแปร global สำหรับการซ้อมปัจจุบัน
 practice_info = {
-    "id": None,
-    "date": None,
-    "time": None,
-    "location": None,
-    "is_open_for_signup": False # <<<< แก้ไข: เพิ่มสถานะการเปิดรับลงชื่อ
+    "id": None, "date": None, "time": None, "location": None,
+    "is_open_for_signup": False
 }
+practice_history = [] # เก็บประวัติการซ้อมทั้งหมด
+last_practice_message = None # เก็บ object ข้อความล่าสุดที่ส่งไปห้องประกาศ
+update_enabled = True # ควบคุมการทำงานของ tasks.loop
 
-# ตัวแปรเก็บประวัติการซ้อม
-practice_history = []
+# --- ค่าคงที่ ---
+HISTORY_FILE = 'practice_history.json' # ชื่อไฟล์สำหรับเก็บข้อมูล
+ANNOUNCEMENT_CHANNEL_ID = 1375796432140763216 # ID ห้องประกาศ (สำคัญมาก)
+SETTING_CHANNEL_NAME = "🔥┃setting"
+SIGNUP_CHANNEL_NAME = "🔥┃ลงชื่อซ้อม"
 
-# ตัวแปรเก็บข้อความล่าสุดของการซ้อมปัจจุบันในห้องประกาศ
-last_practice_message = None
+# --- ฟังก์ชันจัดการข้อมูล ---
+def log_ts(message): # ฟังก์ชันช่วย log พร้อม timestamp
+    print(f"[{datetime.now(TZ_BANGKOK).strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
-# ตัวแปรควบคุมการอัปเดตสถานะ
-update_enabled = True
-
-# ไอดีห้อง
-ANNOUNCEMENT_CHANNEL_ID = 1375796432140763216 # ใส่ ID ห้องประกาศจริง
-SETTING_CHANNEL_NAME = "🔥┃setting" # ชื่อห้อง setting
-SIGNUP_CHANNEL_NAME = "🔥┃ลงชื่อซ้อม" # ชื่อห้องลงชื่อซ้อม
-
-# ฟังก์ชันโหลดประวัติและการตั้งค่าจากไฟล์
-def load_history_from_file():
+def load_data_from_file(): # เปลี่ยนชื่อให้สื่อถึงการโหลดข้อมูลทั้งหมด
     global practice_history, update_enabled, practice_info
     try:
-        with open('practice_history.json', 'r', encoding='utf-8') as f:
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            practice_history = data.get("history", [])
-            update_enabled = data.get("update_enabled", True)
-            # หากต้องการโหลด practice_info ล่าสุดจากไฟล์ (ถ้ามีการบันทึก)
-            # current_practice_from_file = data.get("current_practice", None)
-            # if current_practice_from_file:
-            #     practice_info = current_practice_from_file
-            # else: # รีเซ็ตถ้าไม่มีข้อมูลปัจจุบันในไฟล์
-            practice_info = {
-                "id": None, "date": None, "time": None, "location": None,
-                "is_open_for_signup": False
-            }
+        practice_history = data.get("history", [])
+        update_enabled = data.get("update_enabled", True)
+        # รีเซ็ต practice_info ทุกครั้งที่โหลด; การซ้อมปัจจุบันจะถูกตั้งด้วย !setplay เท่านั้น
+        practice_info = {"id": None, "date": None, "time": None, "location": None, "is_open_for_signup": False}
 
-        # ตรวจสอบและเพิ่ม ID ให้ข้อมูลเก่า (ถ้าจำเป็น)
-        id_changed = False
+        # ตรวจสอบและซ่อมแซม ID และ is_open_for_signup ใน history
+        history_modified = False
         for i, entry in enumerate(practice_history):
-            if "id" not in entry or not entry["id"]:
-                entry["id"] = f"{len(practice_history) - i:03d}" # หรือ logic การสร้าง ID อื่นๆ
-                id_changed = True
-            # เพิ่ม is_open_for_signup ถ้าไม่มีในข้อมูลเก่า (ถือว่าปิดไปแล้ว)
+            if not entry.get("id") or not entry["id"].isdigit():
+                entry["id"] = f"{len(practice_history) - i:03d}" # Logic สร้าง ID ชั่วคราว
+                history_modified = True
             if "is_open_for_signup" not in entry:
-                entry["is_open_for_signup"] = False # ข้อมูลเก่าถือว่าปิดรับแล้ว
-                id_changed = True # ตั้งเป็น True เพื่อให้มีการ save_history_to_file()
-
-        if id_changed:
-            save_history_to_file()
-
+                entry["is_open_for_signup"] = False # สมมติว่า entry เก่าๆ ปิดรับไปแล้ว
+                history_modified = True
+        if history_modified:
+            save_data_to_file()
+        log_ts(f"Data loaded. History entries: {len(practice_history)}, Update enabled: {update_enabled}")
     except FileNotFoundError:
-        practice_history = []
-        update_enabled = True
-        practice_info = {
-            "id": None, "date": None, "time": None, "location": None,
-            "is_open_for_signup": False
-        }
+        log_ts(f"'{HISTORY_FILE}' not found. Initializing with empty data.")
+        practice_history, update_enabled = [], True
+        practice_info = {"id": None, "date": None, "time": None, "location": None, "is_open_for_signup": False}
+        save_data_to_file() # สร้างไฟล์ใหม่ถ้ายังไม่มี
     except json.JSONDecodeError:
-        print("Error decoding practice_history.json. File might be corrupted or empty.")
-        practice_history = []
-        update_enabled = True
-        practice_info = {
-            "id": None, "date": None, "time": None, "location": None,
-            "is_open_for_signup": False
-        }
+        log_ts(f"Error decoding '{HISTORY_FILE}'. File might be corrupted. Initializing.")
+        practice_history, update_enabled = [], True
+        practice_info = {"id": None, "date": None, "time": None, "location": None, "is_open_for_signup": False}
+        # อาจจะมีการสำรองไฟล์เก่าก่อนเขียนทับ
+    except Exception as e:
+        log_ts(f"An unexpected error occurred during load_data_from_file: {e}")
 
-# ฟังก์ชันบันทึกประวัติและการตั้งค่าลงไฟล์
-def save_history_to_file():
-    data = {
-        "history": practice_history,
-        "update_enabled": update_enabled
-        # หากต้องการบันทึก practice_info ปัจจุบันลงไฟล์ด้วย:
-        # "current_practice": practice_info
-    }
-    with open('practice_history.json', 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
 
-# ฟังก์ชันสร้าง ID ใหม่
-def generate_practice_id():
-    if not practice_history:
-        return "001"
-    valid_ids = [int(entry["id"]) for entry in practice_history if entry.get("id") and entry["id"].isdigit()]
-    if not valid_ids:
-        return "001"
-    last_id = max(valid_ids)
-    return f"{last_id + 1:03d}"
+def save_data_to_file(): # เปลี่ยนชื่อให้สื่อถึงการบันทึกข้อมูลทั้งหมด
+    data_to_save = {"history": practice_history, "update_enabled": update_enabled}
+    # ไม่ควรบันทึก practice_info ลงไฟล์ history หลัก เพราะมันคือ "สถานะปัจจุบัน"
+    # ถ้าต้องการ persistence ของ practice_info ควรแยกไฟล์ หรือใช้ DB
+    try:
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data_to_save, f, ensure_ascii=False, indent=4)
+        # log_ts(f"Data saved to '{HISTORY_FILE}'.") # อาจจะ log ถี่ไป
+    except Exception as e:
+        log_ts(f"ERROR saving data to '{HISTORY_FILE}': {e}")
 
-# ฟังก์ชันบันทึกหรืออัปเดตประวัติการซ้อม (สำหรับการซ้อมปัจจุบัน)
-def save_current_practice_to_history(): # เปลี่ยนชื่อให้ชัดเจนว่าบันทึก "ปัจจุบัน"
-    if all([practice_info.get("id"), practice_info.get("date"), practice_info.get("time"), practice_info.get("location")]):
-        # ลบ entry เก่าที่มี ID เดียวกันออกจาก practice_history
-        practice_history[:] = [entry for entry in practice_history if entry.get("id") != practice_info["id"]]
+def generate_new_practice_id():
+    if not practice_history: return "001"
+    numeric_ids = [int(e["id"]) for e in practice_history if e.get("id") and e["id"].isdigit()]
+    return f"{(max(numeric_ids) if numeric_ids else 0) + 1:03d}"
 
-        # สร้าง entry ใหม่สำหรับ history
-        history_entry = {
+def archive_current_practice_if_exists():
+    """บันทึกการซ้อมปัจจุบัน (practice_info) ลงใน practice_history ถ้ามีข้อมูล"""
+    if practice_info.get("id") and all(practice_info.get(k) for k in ["date", "time", "location"]):
+        # ตรวจสอบว่า ID นี้มีใน history หรือยัง
+        existing_entry_index = -1
+        for i, entry in enumerate(practice_history):
+            if entry.get("id") == practice_info["id"]:
+                existing_entry_index = i
+                break
+        
+        entry_to_save = {
             "id": practice_info["id"],
             "date": practice_info["date"],
             "time": practice_info["time"],
             "location": practice_info["location"],
-            "members": members.copy(), # ใช้ members ปัจจุบัน
-            "is_open_for_signup": practice_info.get("is_open_for_signup", False) # <<<< แก้ไข: เพิ่มสถานะ
+            "members": members.copy(), # ใช้ members ณ เวลาที่บันทึก
+            "is_open_for_signup": practice_info.get("is_open_for_signup", False)
         }
-        practice_history.append(history_entry)
-        practice_history.sort(key=lambda x: x.get("id", "000")) # เรียงตาม ID
-        save_history_to_file()
 
-# ฟังก์ชันสร้างข้อความแจ้งเตือนการซ้อมปัจจุบัน
-def create_notification():
-    if not all([practice_info.get("id"), practice_info.get("date"), practice_info.get("time"), practice_info.get("location")]):
-        return None
-    notification = f"📢 **การซ้อมครั้งใหม่ (ฉบับที่ {practice_info['id']})**\n"
-    notification += f"📅 วันที่: {practice_info['date']}\n"
-    notification += f"⏰ เวลา: {practice_info['time']}\n"
-    notification += f"📍 สถานที่: {practice_info['location']}\n"
-    # --- เพิ่มการแสดงสถานะการลงชื่อ ---
-    if practice_info.get("is_open_for_signup", False):
-        notification += "สถานะ: ✅ **เปิดรับลงชื่อ**\n"
+        if existing_entry_index != -1: # ถ้ามี ID นี้อยู่แล้ว, ให้อัปเดต
+            practice_history[existing_entry_index] = entry_to_save
+            log_ts(f"Updated practice ID {practice_info['id']} in history.")
+        else: # ถ้าเป็น ID ใหม่, ให้เพิ่มเข้าไป
+            practice_history.append(entry_to_save)
+            log_ts(f"Archived new practice ID {practice_info['id']} to history.")
+        
+        practice_history.sort(key=lambda x: x.get("id", "000"))
+        save_data_to_file()
+
+
+def create_practice_notification_embed(): # เปลี่ยนชื่อให้สื่อว่าสร้าง Embed
+    if not all(practice_info.get(k) for k in ["id", "date", "time", "location"]):
+        return None # ไม่มีข้อมูลการซ้อมปัจจุบัน
+
+    embed = discord.Embed(
+        title=f"📢 การซ้อม (ฉบับที่ {practice_info['id']})",
+        color=discord.Color.blue() if practice_info.get("is_open_for_signup") else discord.Color.orange()
+    )
+    embed.add_field(name="📅 วันที่", value=practice_info['date'], inline=True)
+    embed.add_field(name="⏰ เวลา", value=practice_info['time'], inline=True)
+    embed.add_field(name="📍 สถานที่", value=practice_info['location'], inline=False)
+
+    status_text = "✅ **เปิดรับลงชื่อ**" if practice_info.get("is_open_for_signup") else "🅾️ **ปิดรับลงชื่อแล้ว**"
+    embed.add_field(name="สถานะการลงชื่อ", value=status_text, inline=False)
+
+    member_status_lines = [f"• {name}: {status}" for name, status in members.items()]
+    embed.add_field(name="📋 รายชื่อแก๊ง", value="\n".join(member_status_lines) or "ไม่มีข้อมูลสมาชิก", inline=False)
+    embed.set_footer(text=f"อัปเดตเมื่อ: {datetime.now(TZ_BANGKOK).strftime('%H:%M:%S')}")
+    return embed
+
+def create_practice_summary_embed(practice_id_to_summarize: str): # เปลี่ยนชื่อ
+    data_source = None
+    current_members_state = None
+
+    if practice_info.get("id") == practice_id_to_summarize:
+        data_source = practice_info
+        current_members_state = members # สรุปการซ้อมปัจจุบัน ใช้สถานะ members ปัจจุบัน
     else:
-        notification += "สถานะ: 🅾️ **ปิดรับลงชื่อแล้ว**\n"
-    # --- จบการแสดงสถานะ ---
-    notification += "📋 รายชื่อแก๊ง:\n"
-    for i, (name, status) in enumerate(members.items(), 1):
-        notification += f"{i}. {name} - {status}\n"
-    return notification
+        for entry in practice_history:
+            if entry.get("id") == practice_id_to_summarize:
+                data_source = entry
+                current_members_state = entry.get("members", {}) # สรุปจาก history ใช้ members ที่บันทึกไว้
+                break
+    
+    if not data_source or not all(data_source.get(k) for k in ["date", "time", "location"]):
+        return discord.Embed(title=f"ไม่พบข้อมูลการซ้อม", description=f"ไม่พบข้อมูลสำหรับฉบับที่ {practice_id_to_summarize}", color=discord.Color.red())
 
-# ฟังก์ชันสร้างข้อความสรุปตาม ID
-def create_summary(practice_id):
-    # ตรวจสอบการซ้อมปัจจุบันก่อน
-    if practice_info.get("id") == practice_id and all([practice_info.get("date"), practice_info.get("time"), practice_info.get("location")]):
-        summary = f"📊 **สรุปการซ้อม (ฉบับที่ {practice_id})**\n"
-        summary += f"📅 วันที่: {practice_info['date']}\n"
-        summary += f"⏰ เวลา: {practice_info['time']}\n"
-        summary += f"📍 สถานที่: {practice_info['location']}\n"
-        summary += "📋 รายชื่อแก๊ง:\n"
-        # ใช้ members จาก practice_info โดยตรงสำหรับการซ้อมปัจจุบัน
-        current_members_for_summary = members
-        for i, (name, status) in enumerate(current_members_for_summary.items(), 1):
-            summary += f"{i}. {name} - {status}\n"
-        return summary
+    embed = discord.Embed(title=f"📊 สรุปการซ้อม (ฉบับที่ {practice_id_to_summarize})", color=discord.Color.green())
+    embed.add_field(name="📅 วันที่", value=data_source['date'], inline=True)
+    embed.add_field(name="⏰ เวลา", value=data_source['time'], inline=True)
+    embed.add_field(name="📍 สถานที่", value=data_source['location'], inline=False)
+    
+    member_summary_lines = [f"• {name}: {status}" for name, status in current_members_state.items()]
+    embed.add_field(name="📋 ผลการลงชื่อ", value="\n".join(member_summary_lines) or "ไม่มีข้อมูลการลงชื่อ", inline=False)
+    embed.set_footer(text=f"ข้อมูลสรุป ณ {datetime.now(TZ_BANGKOK).strftime('%d/%m/%Y %H:%M:%S')}")
+    return embed
 
-    # ตรวจสอบในประวัติ
-    for entry in practice_history:
-        if entry.get("id") == practice_id:
-            summary = f"📊 **สรุปการซ้อม (ฉบับที่ {practice_id})**\n"
-            summary += f"📅 วันที่: {entry['date']}\n"
-            summary += f"⏰ เวลา: {entry['time']}\n"
-            summary += f"📍 สถานที่: {entry['location']}\n"
-            summary += "📋 รายชื่อแก๊ง:\n"
-            # ใช้ members จาก entry ใน history
-            for i, (name, status) in enumerate(entry['members'].items(), 1):
-                summary += f"{i}. {name} - {status}\n"
-            return summary
-    return f"ไม่พบข้อมูลการซ้อมสำหรับฉบับที่ {practice_id}!"
-
-
-# ฟังก์ชันอัปเดตสถานะทุก 5 นาที
+# --- Tasks ---
 @tasks.loop(minutes=5)
-async def update_status_task():
-    if update_enabled:
-        global last_practice_message
-        announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-        if announcement_channel and practice_info.get("id"): # ตรวจสอบว่ามีการซ้อมปัจจุบัน
-            if last_practice_message:
-                try: await last_practice_message.delete()
-                except discord.errors.NotFound: pass
-                except discord.errors.Forbidden: print(f"Bot cannot delete messages in {announcement_channel.name}")
-                except Exception as e: print(f"Error deleting message: {e}")
+async def periodic_status_update_task(): # เปลี่ยนชื่อ
+    global last_practice_message
+    if not update_enabled or not practice_info.get("id") or not bot.is_ready():
+        return
 
-            notification = create_notification()
-            if notification:
-                try: last_practice_message = await announcement_channel.send(notification)
-                except discord.errors.Forbidden: print(f"Bot cannot send messages in {announcement_channel.name}")
-                except Exception as e: print(f"Error sending message: {e}")
+    announcement_ch = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+    if not announcement_ch:
+        log_ts(f"ERROR: Announcement channel ID {ANNOUNCEMENT_CHANNEL_ID} not found for periodic update.")
+        return
 
+    if last_practice_message:
+        try:
+            await last_practice_message.delete()
+        except (discord.NotFound, discord.Forbidden): pass # Already deleted or no permission
+        except Exception as e: log_ts(f"Error deleting old status message for update: {e}")
+        finally: last_practice_message = None
+
+    notification_embed = create_practice_notification_embed()
+    if notification_embed:
+        try:
+            last_practice_message = await announcement_ch.send(embed=notification_embed)
+        except discord.Forbidden: log_ts(f"ERROR: Bot lacks permission to send messages in announcement channel for update.")
+        except Exception as e: log_ts(f"Error sending new status message for update: {e}")
+
+# --- Bot Events ---
 @bot.event
 async def on_ready():
-    print(f'Bot {bot.user.name} is online!') # เปลี่ยนเป็น bot.user.name
-    load_history_from_file()
-    if not update_status_task.is_running():
-        update_status_task.start()
-    start_server()
+    log_ts(f"Bot {bot.user.name} (ID: {bot.user.id}) is online and ready!")
+    load_data_from_file() # โหลดข้อมูลทั้งหมดเมื่อบอทพร้อม
+    if not periodic_status_update_task.is_running():
+        periodic_status_update_task.start()
+        log_ts("Periodic status update task started.")
+    start_server() # เริ่ม Flask server
     try:
-        game_name = f"จัดการซ้อม | {bot.command_prefix}setplay"
-        await bot.change_presence(activity=discord.Game(name=game_name))
-        print(f"Bot presence set to: Playing {game_name}")
+        activity_name = f"ดูแลการซ้อม | {bot.command_prefix}setplay"
+        await bot.change_presence(activity=discord.Game(name=activity_name))
+        log_ts(f"Bot presence set to: Playing {activity_name}")
     except Exception as e:
-        print(f"Error setting bot presence: {e}")
+        log_ts(f"Error setting bot presence: {e}")
 
-def in_channel(channel_name_or_id):
+# --- Decorators & Checks ---
+def is_correct_channel(channel_name_or_id): # เปลี่ยนชื่อ
     async def predicate(ctx):
-        is_correct_channel = False
+        is_valid = False
         if isinstance(channel_name_or_id, int):
-            if ctx.channel.id == channel_name_or_id: is_correct_channel = True
+            is_valid = (ctx.channel.id == channel_name_or_id)
         elif isinstance(channel_name_or_id, str):
-            if ctx.channel.name.lower() == channel_name_or_id.lower(): is_correct_channel = True
-
-        if not is_correct_channel:
-            if isinstance(channel_name_or_id, str):
-                await ctx.send(f"ใช้คำสั่งนี้ได้เฉพาะในห้อง '{channel_name_or_id}' เท่านั้น!", ephemeral=True, delete_after=10)
-            else:
-                await ctx.send(f"ใช้คำสั่งนี้ได้เฉพาะในห้องที่กำหนดเท่านั้น!", ephemeral=True, delete_after=10)
-            return False
-        return True
+            is_valid = (ctx.channel.name.lower() == channel_name_or_id.lower())
+        
+        if not is_valid:
+            error_msg = f"คำสั่งนี้ใช้ได้เฉพาะในห้อง '{channel_name_or_id}' เท่านั้น!" if isinstance(channel_name_or_id, str) else "คำสั่งนี้ใช้ได้เฉพาะในห้องที่กำหนดเท่านั้น!"
+            try: await ctx.send(error_msg, ephemeral=True, delete_after=10)
+            except: pass # Ignore if cannot send ephemeral (e.g., in DMs, though check should prevent this)
+        return is_valid
     return commands.check(predicate)
 
-@bot.command()
-@in_channel(SETTING_CHANNEL_NAME)
-async def disable_update(ctx):
+# --- Bot Commands ---
+@bot.command(name="ปิดอัปเดต", aliases=["disableupdate"])
+@is_correct_channel(SETTING_CHANNEL_NAME)
+@commands.has_permissions(administrator=True) # เพิ่มการตรวจสอบสิทธิ์
+async def disable_periodic_update(ctx):
     global update_enabled
-    if not update_enabled: await ctx.send("การอัปเดตสถานะทุก 5 นาทีถูกปิดอยู่แล้ว!"); return
+    if not update_enabled:
+        await ctx.send("การอัปเดตสถานะอัตโนมัติปิดอยู่แล้ว", ephemeral=True, delete_after=10)
+        return
     update_enabled = False
-    save_history_to_file() # บันทึกการตั้งค่า update_enabled
-    await ctx.send("ปิดการอัปเดตสถานะทุก 5 นาทีเรียบร้อย!")
+    save_data_to_file() # บันทึกสถานะ update_enabled
+    await ctx.send("✅ ปิดการอัปเดตสถานะอัตโนมัติทุก 5 นาทีแล้ว", ephemeral=True)
 
-@bot.command()
-@in_channel(SETTING_CHANNEL_NAME)
-async def enable_update(ctx):
-    global update_enabled
-    if update_enabled: await ctx.send("การอัปเดตสถานะทุก 5 นาทีถูกเปิดอยู่แล้ว!"); return
+@bot.command(name="เปิดอัปเดต", aliases=["enableupdate"])
+@is_correct_channel(SETTING_CHANNEL_NAME)
+@commands.has_permissions(administrator=True) # เพิ่มการตรวจสอบสิทธิ์
+async def enable_periodic_update(ctx):
+    global update_enabled, last_practice_message
+    if update_enabled:
+        await ctx.send("การอัปเดตสถานะอัตโนมัติเปิดอยู่แล้ว", ephemeral=True, delete_after=10)
+        return
     update_enabled = True
-    save_history_to_file() # บันทึกการตั้งค่า update_enabled
-    # อัปเดตทันทีเมื่อเปิด (ถ้ามีการซ้อมปัจจุบัน)
+    save_data_to_file() # บันทึกสถานะ update_enabled
+    await ctx.send("✅ เปิดการอัปเดตสถานะอัตโนมัติทุก 5 นาทีแล้ว", ephemeral=True)
+    # ลองอัปเดตทันที
     if practice_info.get("id"):
-        global last_practice_message
-        announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-        if announcement_channel:
+        announcement_ch = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+        if announcement_ch:
             if last_practice_message:
                 try: await last_practice_message.delete()
                 except: pass
-            notification = create_notification()
-            if notification:
-                try: last_practice_message = await announcement_channel.send(notification)
+            notification_embed = create_practice_notification_embed()
+            if notification_embed:
+                try: last_practice_message = await announcement_ch.send(embed=notification_embed)
                 except: pass
-    await ctx.send("เปิดการอัปเดตสถานะทุก 5 นาทีเรียบร้อย!")
 
-@bot.command(name="ลงชื่อซ้อม", aliases=["ซ้อมทีม"]) # เพิ่ม alias
-@in_channel(SIGNUP_CHANNEL_NAME)
-async def sign_up_practice(ctx): # เปลี่ยนชื่อฟังก์ชันให้เป็นสากล
-    # <<<< แก้ไข: เพิ่มการตรวจสอบสถานะการเปิดรับลงชื่อ >>>>
+@bot.command(name="ลงชื่อซ้อม", aliases=["ซ้อมทีม"])
+@is_correct_channel(SIGNUP_CHANNEL_NAME)
+async def sign_up_for_practice(ctx): # เปลี่ยนชื่อฟังก์ชัน
+    command_message_to_delete = ctx.message # เก็บข้อความคำสั่งไว้ก่อน
+
     if not practice_info.get("id"):
-        await ctx.send("ยังไม่มีการตั้งค่าการซ้อม (ยังไม่เปิดให้ลงชื่อ)!", ephemeral=True, delete_after=10)
+        await ctx.send("⚠️ ยังไม่มีการตั้งค่าการซ้อมในขณะนี้", ephemeral=True, delete_after=10)
+        try: await command_message_to_delete.delete(delay=1) # ลบหลังจากส่ง feedback
+        except: pass
         return
+        
     if not practice_info.get("is_open_for_signup", False):
-        await ctx.send(f"การซ้อมครั้งนี้ (ฉบับที่ {practice_info['id']}) ปิดรับการลงชื่อแล้ว (อาจมีการสรุปผลไปแล้ว)!", ephemeral=True, delete_after=10)
+        await ctx.send(f"🅾️ การซ้อม (ฉบับที่ {practice_info['id']}) ปิดรับการลงชื่อแล้ว", ephemeral=True, delete_after=10)
+        try: await command_message_to_delete.delete(delay=1)
+        except: pass
         return
-    # <<<< สิ้นสุดการตรวจสอบ >>>>
 
-    discord_name = ctx.author.name
-    member_key_to_update = name_mapping.get(discord_name) # ใช้ .get() ปลอดภัยกว่า
+    discord_user_name_key = ctx.author.name # หรือ ctx.author.display_name หรือ ctx.author.global_name
+    mapped_name = name_mapping.get(discord_user_name_key)
 
-    if member_key_to_update and member_key_to_update in members:
-        if members[member_key_to_update] == "มาแล้ว":
-            await ctx.send(f"{member_key_to_update} ลงชื่อไปแล้วนี่นาาา!", ephemeral=True, delete_after=10)
+    if mapped_name and mapped_name in members:
+        if members[mapped_name] == "มาแล้ว":
+            await ctx.send(f"✅ {mapped_name} ได้ลงชื่อไปแล้ว", ephemeral=True, delete_after=7)
+        else:
+            members[mapped_name] = "มาแล้ว"
+            await ctx.send(f"👍 {mapped_name} ลงชื่อซ้อมเรียบร้อย!", delete_after=7) # แจ้งผู้ใช้ก่อน
+            archive_current_practice_if_exists() # อัปเดตข้อมูลการซ้อมปัจจุบันใน history/file
+
+            # อัปเดตข้อความในห้องประกาศ (ถ้ายังเปิด update_enabled)
+            if update_enabled:
+                global last_practice_message
+                announcement_ch = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+                if announcement_ch:
+                    if last_practice_message:
+                        try: await last_practice_message.delete()
+                        except: pass
+                    notification_embed = create_practice_notification_embed()
+                    if notification_embed:
+                        try: last_practice_message = await announcement_ch.send(embed=notification_embed)
+                        except: pass
+    else:
+        await ctx.send(f"❓ ไม่พบชื่อคุณ ({discord_user_name_key}) ในระบบลงทะเบียน", ephemeral=True, delete_after=10)
+
+    # ลบข้อความคำสั่งของผู้ใช้ในทุกกรณี (ถ้าบอทมีสิทธิ์)
+    try:
+        await command_message_to_delete.delete()
+    except discord.Forbidden:
+        log_ts(f"Bot lacks 'Manage Messages' permission in '{ctx.channel.name}' to delete user command.")
+    except discord.HTTPException:
+        pass # Message might have been deleted already
+
+@bot.command(name="เช็คสถานะ", aliases=["สถานะซ้อม"])
+async def check_current_practice_status(ctx): # เปลี่ยนชื่อ
+    if not practice_info.get("id"):
+        await ctx.send("ยังไม่มีการตั้งค่าการซ้อมปัจจุบัน", ephemeral=True, delete_after=10)
+        return
+    notification_embed = create_practice_notification_embed()
+    if notification_embed:
+        await ctx.send(embed=notification_embed)
+    else:
+        await ctx.send("เกิดข้อผิดพลาดในการสร้างข้อความสถานะ", ephemeral=True, delete_after=10)
+
+@bot.command(name="ตั้งค่าซ้อม", aliases=["setplay"])
+@is_correct_channel(SETTING_CHANNEL_NAME)
+@commands.has_permissions(manage_guild=True) # หรือ role ที่เหมาะสม
+async def setup_new_practice(ctx): # เปลี่ยนชื่อ
+    # 1. บันทึกการซ้อมปัจจุบัน (ถ้ามี) ลง history และถือว่ามันจบไปแล้ว
+    if practice_info.get("id"):
+        if practice_info.get("is_open_for_signup"): # ถ้าอันเก่ายังเปิดอยู่ ให้ปิดก่อน
+            practice_info["is_open_for_signup"] = False
+        archive_current_practice_if_exists() # บันทึกอันเก่า
+
+    # 2. เตรียมรับข้อมูลใหม่
+    def message_check(m): return m.author == ctx.author and m.channel == ctx.channel
+
+    inputs_required = [
+        ("วันที่ซ้อม (YYYY-MM-DD):", '%Y-%m-%d', "date"),
+        ("เวลาซ้อม (HH:MM):", '%H:%M', "time"),
+        ("สถานที่ซ้อม:", None, "location") # None for no format check beyond stripping
+    ]
+    new_practice_data = {}
+    await ctx.send("✍️ กรุณาใส่ข้อมูลการซ้อมใหม่ (ตอบทีละรายการ):")
+
+    for prompt, fmt, key in inputs_required:
+        await ctx.send(prompt)
+        try:
+            msg = await bot.wait_for('message', check=message_check, timeout=120.0)
+            content = msg.content.strip()
+            if fmt: # ถ้ามีการตรวจสอบ format (date, time)
+                datetime.strptime(content, fmt) # ลองแปลง, ถ้า error จะไปที่ except ValueError
+            if not content: # ป้องกันการป้อนค่าว่าง
+                await ctx.send("⚠️ ข้อมูลป้อนเข้าไม่ควรเป็นค่าว่าง กรุณาเริ่มใหม่ด้วย `!setplay`", ephemeral=True)
+                return
+            new_practice_data[key] = content
+        except ValueError:
+            await ctx.send(f"⚠️ รูปแบบข้อมูลสำหรับ '{key}' ไม่ถูกต้อง (ตัวอย่าง: {prompt.split('(')[1].split(')')[0]}). กรุณาเริ่มใหม่ด้วย `!setplay`", ephemeral=True)
+            return
+        except asyncio.TimeoutError:
+            await ctx.send("⏰ หมดเวลาการป้อนข้อมูล กรุณาเริ่มใหม่ด้วย `!setplay`", ephemeral=True)
             return
 
-        members[member_key_to_update] = "มาแล้ว"
-        await ctx.send(f"{member_key_to_update} ลงชื่อซ้อมเรียบร้อยแล้ว!")
-        save_current_practice_to_history() # อัปเดตข้อมูลการซ้อมปัจจุบันใน history
+    # 3. อัปเดต practice_info ด้วยข้อมูลใหม่
+    practice_info["id"] = generate_new_practice_id()
+    practice_info["date"] = new_practice_data["date"]
+    practice_info["time"] = new_practice_data["time"]
+    practice_info["location"] = new_practice_data["location"]
+    practice_info["is_open_for_signup"] = True # เปิดรับลงชื่อสำหรับการซ้อมใหม่
 
-        # อัปเดตข้อความแจ้งเตือนทันที
-        global last_practice_message
-        announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-        if announcement_channel and practice_info.get("id"):
-            if last_practice_message:
-                try: await last_practice_message.delete()
-                except: pass
-            notification = create_notification()
-            if notification:
-                try: last_practice_message = await announcement_channel.send(notification)
-                except: pass
-    else:
-        await ctx.send(f"คุณ ({discord_name}) ไม่ได้อยู่ในรายชื่อที่กำหนด หรือมีการตั้งค่า `name_mapping` ไม่ถูกต้อง", ephemeral=True, delete_after=10)
+    # 4. รีเซ็ตสถานะสมาชิกสำหรับ `members` ปัจจุบัน
+    for member_name in members: members[member_name] = "ขาด"
 
-@bot.command()
-async def เช็คสถานะ(ctx):
-    if not practice_info.get("id"):
-        await ctx.send("ยังไม่มีการตั้งค่าการซ้อมปัจจุบัน!")
-        return
-    notification = create_notification()
-    if notification: await ctx.send(notification)
-    else: await ctx.send("เกิดข้อผิดพลาดในการสร้างข้อความแจ้งเตือน!")
+    # 5. บันทึกการซ้อมใหม่นี้ลง history ทันที (สถานะ "เปิด")
+    archive_current_practice_if_exists()
+    await ctx.send(f"✅ ตั้งค่าการซ้อมใหม่ (ฉบับที่ {practice_info['id']}) เรียบร้อยแล้ว!", ephemeral=True)
 
-@bot.command()
-@in_channel(SETTING_CHANNEL_NAME)
-async def setplay(ctx):
-    # บันทึกข้อมูลการซ้อม "ปัจจุบัน" (ถ้ามี) ลง "ประวัติ" ก่อนเริ่มการซ้อมใหม่
-    if practice_info.get("id"):
-        # ก่อนบันทึก, อาจจะตั้ง is_open_for_signup ของอันเก่าเป็น False ถ้ายังไม่ได้สรุป
-        if practice_info.get("is_open_for_signup", False):
-            print(f"Practice ID {practice_info['id']} was still open for signup before new setplay. Closing it.")
-            practice_info["is_open_for_signup"] = False
-        save_current_practice_to_history()
-
-
-    def check(m): return m.author == ctx.author and m.channel == ctx.channel
-
-    await ctx.send("กรุณาใส่ข้อมูลการซ้อม:\n1. วันที่ (เช่น 2024-08-15)\n2. เวลา (เช่น 20:00)\n3. สถานที่ (เช่น เซิฟรอง 1)\nพิมพ์แต่ละรายการแล้วกด Enter")
-    prompts = ["วันที่ (YYYY-MM-DD):", "เวลา (HH:MM):", "สถานที่:"]
-    responses = []
-    for i, prompt_text in enumerate(prompts):
-        await ctx.send(prompt_text)
-        try:
-            msg = await bot.wait_for('message', check=check, timeout=120.0)
-            content = msg.content.strip()
-            if i == 0:
-                try: datetime.strptime(content, '%Y-%m-%d')
-                except ValueError: await ctx.send("รูปแบบวันที่ไม่ถูกต้อง! (YYYY-MM-DD). เริ่ม !setplay ใหม่"); return
-            if i == 1:
-                try: datetime.strptime(content, '%H:%M')
-                except ValueError: await ctx.send("รูปแบบเวลาไม่ถูกต้อง! (HH:MM). เริ่ม !setplay ใหม่"); return
-            responses.append(content)
-        except asyncio.TimeoutError: await ctx.send("หมดเวลาป้อนข้อมูล! เริ่ม !setplay ใหม่"); return
-
-    # อัปเดต practice_info สำหรับการซ้อมใหม่
-    practice_info["id"] = generate_practice_id()
-    practice_info["date"] = responses[0]
-    practice_info["time"] = responses[1]
-    practice_info["location"] = responses[2]
-    practice_info["is_open_for_signup"] = True # <<<< แก้ไข: เปิดให้ลงชื่อสำหรับการซ้อมใหม่
-
-    # รีเซ็ตสถานะสมาชิกสำหรับ members ปัจจุบัน
-    for name in members: members[name] = "ขาด"
-
-    save_current_practice_to_history() # บันทึก "การซ้อมปัจจุบัน" ใหม่นี้ลง "ประวัติ" ทันที
-
+    # 6. ส่ง Notification ไปยังห้องประกาศ
     global last_practice_message
-    announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-    if announcement_channel:
+    announcement_ch = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+    if announcement_ch:
         if last_practice_message:
             try: await last_practice_message.delete()
             except: pass
-        notification = create_notification()
-        if notification:
-            try:
-                last_practice_message = await announcement_channel.send(notification)
-                await ctx.send(f"การตั้งค่าการซ้อม (ฉบับที่ {practice_info['id']}) เสร็จสิ้น! ส่งไปห้องประกาศแล้ว")
-            except discord.errors.Forbidden:
-                await ctx.send(f"ตั้งค่าซ้อม (ฉบับที่ {practice_info['id']}) แล้ว แต่ส่งไปห้องประกาศไม่ได้ (ไม่มีสิทธิ์)")
-        else: await ctx.send("ตั้งค่าซ้อมแล้ว แต่สร้างข้อความแจ้งเตือนไม่ได้")
-    else: await ctx.send("ไม่พบห้องประกาศ! แต่ตั้งค่าซ้อมแล้ว")
+        notification_embed = create_practice_notification_embed()
+        if notification_embed:
+            try: last_practice_message = await announcement_ch.send(embed=notification_embed)
+            except discord.Forbidden: log_ts(f"ERROR: Bot lacks permission to send to announcement channel for new practice.")
+    else:
+        log_ts(f"ERROR: Announcement channel ID {ANNOUNCEMENT_CHANNEL_ID} not found for new practice notification.")
 
-@bot.command()
-@in_channel(SETTING_CHANNEL_NAME)
-async def สรุป(ctx, practice_id: str):
-    if not practice_id.isdigit() or len(practice_id) != 3:
-        await ctx.send("กรุณาระบุ ID เป็นตัวเลข 3 หลัก (เช่น 001)"); return
 
-    announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-    if not announcement_channel:
-        await ctx.send(f"ไม่พบห้องประกาศ (ID: {ANNOUNCEMENT_CHANNEL_ID})!"); return
+@bot.command(name="สรุปผล", aliases=["สรุป"])
+@is_correct_channel(SETTING_CHANNEL_NAME)
+@commands.has_permissions(manage_guild=True) # หรือ role ที่เหมาะสม
+async def summarize_practice(ctx, practice_id_to_summarize: str): # เปลี่ยนชื่อ
+    if not (practice_id_to_summarize.isdigit() and len(practice_id_to_summarize) == 3):
+        await ctx.send("⚠️ ID การซ้อมต้องเป็นตัวเลข 3 หลัก (เช่น 001)", ephemeral=True, delete_after=10)
+        return
 
-    # <<<< แก้ไข: ตรวจสอบและปิดการลงชื่อถ้าเป็น ID ปัจจุบัน >>>>
-    if practice_info.get("id") == practice_id:
-        if practice_info.get("is_open_for_signup", False): # ถ้ายังเปิดอยู่
+    feedback_message = [] # เก็บข้อความ feedback
+
+    # ถ้าเป็นการสรุปการซ้อม "ปัจจุบัน" ให้ปิดการลงชื่อ
+    if practice_info.get("id") == practice_id_to_summarize:
+        if practice_info.get("is_open_for_signup"):
             practice_info["is_open_for_signup"] = False
-            save_current_practice_to_history() # บันทึกการเปลี่ยนแปลงนี้
-            await ctx.send(f"การซ้อมฉบับที่ {practice_id} (ปัจจุบัน) ได้ปิดรับการลงชื่อแล้วเนื่องจากมีการสรุปผล")
+            archive_current_practice_if_exists() # บันทึกการเปลี่ยนแปลงนี้
+            feedback_message.append(f"การซ้อมปัจจุบัน (ฉบับที่ {practice_id_to_summarize}) ได้ปิดรับการลงชื่อแล้ว")
         else:
-            await ctx.send(f"การซ้อมฉบับที่ {practice_id} (ปัจจุบัน) ปิดรับการลงชื่อไปแล้วก่อนหน้านี้")
-    # <<<< สิ้นสุดการแก้ไข >>>>
+            feedback_message.append(f"การซ้อมปัจจุบัน (ฉบับที่ {practice_id_to_summarize}) ปิดรับการลงชื่อไปแล้วก่อนหน้านี้")
+    
+    announcement_ch = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+    if not announcement_ch:
+        await ctx.send(f"❌ ไม่พบห้องประกาศ (ID: {ANNOUNCEMENT_CHANNEL_ID}) ไม่สามารถส่งสรุปได้", ephemeral=True)
+        return
 
-    summary = create_summary(practice_id)
+    summary_embed = create_practice_summary_embed(practice_id_to_summarize)
+    
     try:
-        await announcement_channel.send(summary)
-        await ctx.send(f"สรุปการซ้อม (ฉบับที่ {practice_id}) ถูกส่งไปยังห้องประกาศแล้ว!")
-    except discord.errors.Forbidden:
-        await ctx.send(f"สร้างสรุป (ฉบับที่ {practice_id}) ได้ แต่ส่งไปห้องประกาศไม่ได้ (ไม่มีสิทธิ์)")
+        await announcement_ch.send(embed=summary_embed)
+        feedback_message.append(f"📊 สรุปการซ้อม (ฉบับที่ {practice_id_to_summarize}) ถูกส่งไปยังห้องประกาศแล้ว!")
+    except discord.Forbidden:
+        feedback_message.append(f"⚠️ สามารถสร้างสรุป (ฉบับที่ {practice_id_to_summarize}) ได้ แต่บอทไม่มีสิทธิ์ส่งข้อความไปยังห้องประกาศ")
     except Exception as e:
-        await ctx.send(f"เกิดข้อผิดพลาดในการส่งสรุป: {e}")
+        feedback_message.append(f"❌ เกิดข้อผิดพลาดในการส่งสรุป: {e}")
+        log_ts(f"Error sending summary: {e}")
+
+    if feedback_message:
+        await ctx.send("\n".join(feedback_message), ephemeral=True, delete_after=15)
 
 
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-if DISCORD_TOKEN is None:
-    print("Error: DISCORD_TOKEN not found. Please set it in .env or environment variables.")
+# --- Error Handling ---
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return # ไม่ต้องทำอะไรถ้าหาคำสั่งไม่เจอ
+    elif isinstance(error, commands.CheckFailure): # รวมถึง is_correct_channel และ has_permissions
+        # ข้อความ error จะถูกส่งจากตัว check เองแล้ว (ephemeral)
+        log_ts(f"CheckFailure by {ctx.author} for command {ctx.command}: {error}")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"⚠️ คุณลืมใส่ข้อมูลบางอย่างสำหรับคำสั่งนี้ กรุณาดูวิธีใช้: `{ctx.prefix}{ctx.command.name} {ctx.command.signature}`", ephemeral=True, delete_after=15)
+    else:
+        log_ts(f"Unhandled error in command '{ctx.command}' by '{ctx.author}': {error}")
+        traceback_str = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        log_ts(f"Traceback:\n{traceback_str}")
+        try:
+            await ctx.send(f"เกิดข้อผิดพลาดที่ไม่คาดคิดขณะประมวลผลคำสั่ง: `{error}`", ephemeral=True, delete_after=15)
+        except: pass
+
+
+# --- Run Bot ---
+BOT_TOKEN_ENV = os.getenv('DISCORD_TOKEN')
+if not BOT_TOKEN_ENV:
+    log_ts("CRITICAL ERROR: DISCORD_TOKEN environment variable not found. Bot cannot start.")
 else:
-    try: bot.run(DISCORD_TOKEN)
-    except discord.errors.LoginFailure: print("Login Failed: Incorrect token or bot has invalid intents.")
-    except Exception as e: print(f"An error occurred: {e}")
+    try:
+        log_ts("Attempting to run bot...")
+        bot.run(BOT_TOKEN_ENV)
+    except discord.errors.LoginFailure:
+        log_ts("CRITICAL ERROR: Login Failed. Token is invalid or bot has incorrect intents enabled.")
+    except discord.errors.PrivilegedIntentsRequired:
+        log_ts("CRITICAL ERROR: Privileged Intents (Server Members or Message Content) are not enabled in the Discord Developer Portal for this bot.")
+    except Exception as e:
+        log_ts(f"CRITICAL ERROR during bot.run(): {e}")
+        traceback.print_exc()

@@ -79,8 +79,6 @@ name_mapping = {
     "hanna05682": "Hanna",
     "songkran_gbn": "Songkran",
 }
-}
-}
 practice_info = {
     "id": None, "date": None, "time": None, "location": None,
     "is_open_for_signup": False
